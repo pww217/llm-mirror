@@ -18,7 +18,7 @@ uv run llm-mirror --help
 | `session.py` | `Sampling`, `TurnUsage`, `SessionMeta`, `SessionState`, `SessionStore`, `load_session`, `new_session_path`, `slugify` |
 | `client.py` | `OmlxClient` — HTTP chat with retry taxonomy, telemetry, think-tag stripping |
 | `app.py` | `MirrorApp` — state machine (RUNNING/PAUSED/STOPPED), worker thread, injection queue, context/max-turn guards |
-| `tui.py` | `ParsedInput`, `parse_input`, `Tui` — rich TUI with Live panel, command dispatch, injection handling |
+| `tui.py` | `ParsedInput`, `parse_input`, `Tui` — Textual TUI with `@work(thread=True)` refresh worker, `call_from_thread()` UI updates, command dispatch, injection handling |
 | `main.py` | `main()` — argparse CLI, health/model check, session init/resume, wiring MirrorApp + Tui, RotatingFileHandler logging |
 
 ## Conventions

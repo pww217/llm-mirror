@@ -8,10 +8,9 @@ from dataclasses import dataclass
 from enum import Enum, auto
 
 from llm_mirror.client import ChatRequest, OmlxClient, TransientOmlxError
+from llm_mirror.packages import Package
 from llm_mirror.prompt import (
     Message,
-    render_system,
-    render_user_message,
     speaker_label,
     strip_reply,
 )
@@ -44,6 +43,7 @@ class MirrorApp:
         client: OmlxClient,
         store: SessionStore,
         state: SessionState,
+        package: Package,
         max_turns: int = 0,
         ctx_guard_pct: float = 0.9,
         turn_delay: float = 3.0,
@@ -51,6 +51,7 @@ class MirrorApp:
         self._client = client
         self._store = store
         self._state = state
+        self._package = package
         self._max_turns = max_turns
         self._ctx_guard_pct = ctx_guard_pct
         self._turn_delay = turn_delay
@@ -90,7 +91,7 @@ class MirrorApp:
         self._worker = threading.Thread(target=self._run, daemon=True, name="mirror-worker")
         self._worker.start()
         self._store.append_event({"type": "control", "action": "startup", "detail": "app started"})
-        logger.info("app started: model=%s scenario=%s", self._state.meta.model, self._state.meta.scenario)
+        logger.info("app started: model=%s scenario=%s", self._state.meta.model, self._state.meta.package_name)
 
     def pause(self) -> None:
         self._status = AppStatus.PAUSED
@@ -179,18 +180,20 @@ class MirrorApp:
                     break
             # Build request
             opening = not any(m.speaker in ("echo", "mirror") for m in self._state.messages)
-            if self._state.meta.scenario == "free":
-                system = ""
+            system = self._package.system_prompt
+            transcript = self._package.render_transcript(self._state.messages)
+            first_speaker = next(iter(self._package.personas)) if opening else self._state.next_speaker
+            tail = self._package.render_tail(first_speaker, opening)
+            if opening:
+                parts = []
+                if self._state.meta.seed:
+                    parts.append(f"Topic: {self._state.meta.seed}")
+                if transcript:
+                    parts.append(transcript)
+                parts.append(tail)
+                user = "\n\n".join(parts)
             else:
-                system = render_system(
-                    self._state.meta.echo_card,
-                    self._state.meta.mirror_card,
-                    False,
-                )
-            if self._state.meta.scenario == "free" and self._state.meta.seed is None:
-                user = ""
-            else:
-                user = render_user_message(self._state.messages, opening)
+                user = transcript + "\n\n" + tail if transcript else tail
             req = ChatRequest(
                 model=self._state.meta.model,
                 system=system,
@@ -246,7 +249,7 @@ class MirrorApp:
                     self._total_cached += result.usage.cached_tokens
                     self._total_latency += result.latency_ms
                 # Flip speaker
-                self._state.next_speaker = "mirror" if self._state.next_speaker == "echo" else "echo"
+                self._state.next_speaker = self._package.next_speaker(self._state.next_speaker)
                 # Context guard
                 if result.usage.prompt_tokens >= self._ctx_guard_pct * self._state.meta.max_model_len:
                     self._store.append_event({

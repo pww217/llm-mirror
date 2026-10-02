@@ -4,9 +4,9 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
-import llm_mirror.personas as P
 import llm_mirror.prompt as U
 import llm_mirror.session as S
+from llm_mirror.packages.debate import DebatePackage
 
 
 def _event(etype: str, **fields: object) -> dict:
@@ -14,12 +14,13 @@ def _event(etype: str, **fields: object) -> dict:
 
 
 def _session_event(**fields: object) -> dict:
+    debate = DebatePackage()
+    personas = debate.personas
     return _event(
         "session",
         model="test-model",
         base_url="http://localhost:8000/v1",
-        scenario="grounded",
-        participants={"echo": {"card": P.ECHO_CARD}, "mirror": {"card": P.MIRROR_CARD}},
+        participants={"echo": {"card": personas["echo"]}, "mirror": {"card": personas["mirror"]}},
         sampling={"temperature": 0.8, "max_tokens": 300, "frequency_penalty": 0.0, "presence_penalty": 0.0},
         max_model_len=262144,
         **fields,
@@ -60,9 +61,9 @@ class TestSessionStore:
         meta = S.SessionMeta(
             model="test-model",
             base_url="http://localhost:8000/v1",
-            scenario="grounded",
-            echo_card=P.ECHO_CARD,
-            mirror_card=P.MIRROR_CARD,
+            package_name="debate",
+            echo_card=DebatePackage().personas["echo"],
+            mirror_card=DebatePackage().personas["mirror"],
             sampling=S.Sampling(),
             seed="test",
             max_model_len=262144,
@@ -170,6 +171,22 @@ class TestLoadSession:
         except S.SessionCorruptedError:
             pass
 
+    def test_legacy_scenario_grounded_maps_to_debate(self, tmp_path: Path) -> None:
+        path = tmp_path / "test.jsonl"
+        store = S.SessionStore(path)
+        store.append_event(_session_event(scenario="grounded"))
+        store.close()
+        state = S.load_session(path)
+        assert state.meta.package_name == "debate"
+
+    def test_legacy_scenario_free_maps_to_debate(self, tmp_path: Path) -> None:
+        path = tmp_path / "test.jsonl"
+        store = S.SessionStore(path)
+        store.append_event(_session_event(scenario="free"))
+        store.close()
+        state = S.load_session(path)
+        assert state.meta.package_name == "debate"
+
 
 class TestNewSessionPath:
     def test_with_seed(self, tmp_path: Path) -> None:
@@ -208,12 +225,13 @@ class TestSlugify:
         assert S.slugify("!!!") == "unseeded"
 
     def test_thinking_default_false(self) -> None:
+        debate = DebatePackage()
         meta = S.SessionMeta(
             model="test",
             base_url="http://localhost:8000/v1",
-            scenario="grounded",
-            echo_card=P.ECHO_CARD,
-            mirror_card=P.MIRROR_CARD,
+            package_name="debate",
+            echo_card=debate.personas["echo"],
+            mirror_card=debate.personas["mirror"],
             sampling=S.Sampling(),
             seed="test",
             max_model_len=262144,

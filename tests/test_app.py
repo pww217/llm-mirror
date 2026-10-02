@@ -7,6 +7,7 @@ import pytest
 
 from llm_mirror.app import AppStatus, MirrorApp
 from llm_mirror.client import ChatRequest, OmlxClientError, TurnResult
+from llm_mirror.packages import Package
 from llm_mirror.session import (
     Sampling,
     SessionMeta,
@@ -37,17 +38,18 @@ class FakeClient:
 def _make_state(
     tmp_path: Path,
     seed: str | None = "test",
-    scenario: str = "grounded",
+    package_name: str = "debate",
     max_model_len: int = 262144,
-) -> tuple[SessionState, SessionStore]:
-    from llm_mirror.personas import ECHO_CARD, MIRROR_CARD
+) -> tuple[SessionState, SessionStore, Package]:
+    from llm_mirror.packages.debate import DebatePackage
+    package = DebatePackage()
 
     meta = SessionMeta(
         model="test",
         base_url="http://localhost:8000/v1",
-        scenario=scenario,
-        echo_card=ECHO_CARD,
-        mirror_card=MIRROR_CARD,
+        package_name=package_name,
+        echo_card=package.personas["echo"],
+        mirror_card=package.personas["mirror"],
         sampling=Sampling(),
         seed=seed,
         max_model_len=max_model_len,
@@ -57,14 +59,15 @@ def _make_state(
         "type": "session",
         "model": meta.model,
         "base_url": meta.base_url,
-        "scenario": meta.scenario,
+        "scenario": package_name,
+        "package_name": meta.package_name,
         "participants": {"echo": {"card": meta.echo_card}, "mirror": {"card": meta.mirror_card}},
         "sampling": {"temperature": 0.8, "max_tokens": 300, "frequency_penalty": 0.0, "presence_penalty": 0.0},
         "seed": meta.seed,
         "max_model_len": meta.max_model_len,
     })
     state = SessionState(meta, [], "echo")
-    return state, store
+    return state, store, package
 
 
 def _turn(content: str, prompt: int = 100, cached: int = 80, latency: int = 50) -> TurnResult:
@@ -77,9 +80,9 @@ def _turn(content: str, prompt: int = 100, cached: int = 80, latency: int = 50) 
 
 class TestRotation:
     def test_echo_then_mirror(self, tmp_path: Path) -> None:
-        state, store = _make_state(tmp_path)
+        state, store, package = _make_state(tmp_path)
         fake = FakeClient([_turn("echo msg"), _turn("mirror msg")])
-        app = MirrorApp(fake, store, state, max_turns=2, turn_delay=0)
+        app = MirrorApp(fake, store, state, package, max_turns=2, turn_delay=0)
         app.start()
         time.sleep(0.5)
         app.quit()
@@ -87,11 +90,11 @@ class TestRotation:
         assert state.messages[1].speaker == "mirror"
 
     def test_rotation_continues(self, tmp_path: Path) -> None:
-        state, store = _make_state(tmp_path)
+        state, store, package = _make_state(tmp_path)
         fake = FakeClient([
             _turn("e1"), _turn("m1"), _turn("e2"), _turn("m2"),
         ])
-        app = MirrorApp(fake, store, state, max_turns=4, turn_delay=0)
+        app = MirrorApp(fake, store, state, package, max_turns=4, turn_delay=0)
         app.start()
         time.sleep(0.5)
         app.quit()
@@ -101,9 +104,9 @@ class TestRotation:
 
 class TestInjection:
     def test_queued_injection(self, tmp_path: Path) -> None:
-        state, store = _make_state(tmp_path)
+        state, store, package = _make_state(tmp_path)
         fake = FakeClient([_turn("echo1"), _turn("mirror1")])
-        app = MirrorApp(fake, store, state, max_turns=2, turn_delay=0)
+        app = MirrorApp(fake, store, state, package, max_turns=2, turn_delay=0)
         app.start()
         time.sleep(0.1)
         app.inject("user says hello")
@@ -115,9 +118,9 @@ class TestInjection:
         assert user_msgs[0].content == "user says hello"
 
     def test_targeted_injection(self, tmp_path: Path) -> None:
-        state, store = _make_state(tmp_path)
+        state, store, package = _make_state(tmp_path)
         fake = FakeClient([_turn("echo1")])
-        app = MirrorApp(fake, store, state, max_turns=1, turn_delay=0)
+        app = MirrorApp(fake, store, state, package, max_turns=1, turn_delay=0)
         app.start()
         time.sleep(0.1)
         app.inject("targeted msg", target="mirror")
@@ -127,9 +130,9 @@ class TestInjection:
         assert state.next_speaker == "mirror"
 
     def test_ambient_injection_preserves_rotation(self, tmp_path: Path) -> None:
-        state, store = _make_state(tmp_path)
+        state, store, package = _make_state(tmp_path)
         fake = FakeClient([_turn("echo1")])
-        app = MirrorApp(fake, store, state, max_turns=1, turn_delay=0)
+        app = MirrorApp(fake, store, state, package, max_turns=1, turn_delay=0)
         app.start()
         time.sleep(0.3)
         app.inject("ambient msg")
@@ -141,9 +144,9 @@ class TestInjection:
 
 class TestPauseResume:
     def test_pause_stops_turns(self, tmp_path: Path) -> None:
-        state, store = _make_state(tmp_path)
+        state, store, package = _make_state(tmp_path)
         fake = FakeClient([_turn("echo1")])
-        app = MirrorApp(fake, store, state, max_turns=5, turn_delay=0)
+        app = MirrorApp(fake, store, state, package, max_turns=5, turn_delay=0)
         app.start()
         time.sleep(0.3)
         app.pause()
@@ -153,9 +156,9 @@ class TestPauseResume:
         # Only 1 turn because pause stopped the loop
 
     def test_resume_continues(self, tmp_path: Path) -> None:
-        state, store = _make_state(tmp_path)
+        state, store, package = _make_state(tmp_path)
         fake = FakeClient([_turn("e1"), _turn("m1"), _turn("e2")])
-        app = MirrorApp(fake, store, state, max_turns=3, turn_delay=0)
+        app = MirrorApp(fake, store, state, package, max_turns=3, turn_delay=0)
         app.start()
         time.sleep(0.2)
         app.pause()
@@ -166,9 +169,9 @@ class TestPauseResume:
         assert len(state.messages) >= 2
 
     def test_status_changes(self, tmp_path: Path) -> None:
-        state, store = _make_state(tmp_path)
+        state, store, package = _make_state(tmp_path)
         fake = FakeClient([_turn("e1")])
-        app = MirrorApp(fake, store, state, turn_delay=0)
+        app = MirrorApp(fake, store, state, package, turn_delay=0)
         assert app.status == AppStatus.RUNNING
         app.pause()
         assert app.status == AppStatus.PAUSED
@@ -180,9 +183,9 @@ class TestPauseResume:
 
 class TestMaxTurns:
     def test_stops_at_max_turns(self, tmp_path: Path) -> None:
-        state, store = _make_state(tmp_path)
+        state, store, package = _make_state(tmp_path)
         fake = FakeClient([_turn(f"msg{i}") for i in range(10)])
-        app = MirrorApp(fake, store, state, max_turns=3, turn_delay=0)
+        app = MirrorApp(fake, store, state, package, max_turns=3, turn_delay=0)
         app.start()
         time.sleep(0.5)
         app.quit()
@@ -191,9 +194,9 @@ class TestMaxTurns:
 
 class TestContextGuard:
     def test_triggers_near_max(self, tmp_path: Path) -> None:
-        state, store = _make_state(tmp_path, max_model_len=1000)
+        state, store, package = _make_state(tmp_path, max_model_len=1000)
         fake = FakeClient([_turn("big", prompt=950)])
-        app = MirrorApp(fake, store, state, ctx_guard_pct=0.9, turn_delay=0)
+        app = MirrorApp(fake, store, state, package, ctx_guard_pct=0.9, turn_delay=0)
         app.start()
         time.sleep(0.3)
         assert app.status == AppStatus.PAUSED
@@ -202,18 +205,18 @@ class TestContextGuard:
 
 class TestErrorHandling:
     def test_transient_error(self, tmp_path: Path) -> None:
-        state, store = _make_state(tmp_path)
+        state, store, package = _make_state(tmp_path)
         fake = FakeClient(error=OmlxClientError("server down"))
-        app = MirrorApp(fake, store, state, turn_delay=0)
+        app = MirrorApp(fake, store, state, package, turn_delay=0)
         app.start()
         time.sleep(0.3)
         assert app.status == AppStatus.PAUSED
         app.quit()
 
     def test_save_from_paused(self, tmp_path: Path) -> None:
-        state, store = _make_state(tmp_path)
+        state, store, package = _make_state(tmp_path)
         fake = FakeClient(error=OmlxClientError("down"))
-        app = MirrorApp(fake, store, state, turn_delay=0)
+        app = MirrorApp(fake, store, state, package, turn_delay=0)
         app.start()
         time.sleep(0.2)
         app.pause()
@@ -224,9 +227,9 @@ class TestErrorHandling:
 
 class TestQuit:
     def test_quit_from_paused(self, tmp_path: Path) -> None:
-        state, store = _make_state(tmp_path)
+        state, store, package = _make_state(tmp_path)
         fake = FakeClient()
-        app = MirrorApp(fake, store, state, turn_delay=0)
+        app = MirrorApp(fake, store, state, package, turn_delay=0)
         app.start()
         app.pause()
         app.quit()
@@ -236,12 +239,12 @@ class TestQuit:
 
 class TestStats:
     def test_stats_computed(self, tmp_path: Path) -> None:
-        state, store = _make_state(tmp_path)
+        state, store, package = _make_state(tmp_path)
         fake = FakeClient([
             _turn("e1", prompt=100, cached=80, latency=50),
             _turn("m1", prompt=120, cached=100, latency=60),
         ])
-        app = MirrorApp(fake, store, state, max_turns=2, turn_delay=0)
+        app = MirrorApp(fake, store, state, package, max_turns=2, turn_delay=0)
         app.start()
         time.sleep(0.5)
         app.quit()

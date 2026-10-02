@@ -49,8 +49,8 @@ class SessionMeta:
         "max_model_len",
         "mirror_card",
         "model",
+        "package_name",
         "sampling",
-        "scenario",
         "seed",
         "thinking",
     )
@@ -59,7 +59,7 @@ class SessionMeta:
         self,
         model: str,
         base_url: str,
-        scenario: str,
+        package_name: str,
         echo_card: str,
         mirror_card: str,
         sampling: Sampling,
@@ -69,7 +69,7 @@ class SessionMeta:
     ) -> None:
         self.model = model
         self.base_url = base_url
-        self.scenario = scenario
+        self.package_name = package_name
         self.echo_card = echo_card
         self.mirror_card = mirror_card
         self.sampling = sampling
@@ -109,7 +109,7 @@ class SessionStore:
         lines.append("")
         lines.append(f"- **Model:** {m.model}")
         lines.append(f"- **Base URL:** {m.base_url}")
-        lines.append(f"- **Scenario:** {m.scenario}")
+        lines.append(f"- **Scenario:** {m.package_name}")
         lines.append(f"- **Seed:** {m.seed or 'none'}")
         lines.append(f"- **Max tokens:** {m.sampling.max_tokens}")
         lines.append(f"- **Temperature:** {m.sampling.temperature}")
@@ -173,10 +173,16 @@ def load_session(path: Path) -> SessionState:
                 frequency_penalty=event.get("sampling", {}).get("frequency_penalty", 0.0),
                 presence_penalty=event.get("sampling", {}).get("presence_penalty", 0.0),
             )
+            # Map legacy scenario values to package names
+            legacy_scenario = event.get("scenario", "grounded")
+            if legacy_scenario == "grounded" or legacy_scenario == "free":
+                package_name = "debate"
+            else:
+                package_name = legacy_scenario or "debate"
             meta = SessionMeta(
                 model=event.get("model", ""),
                 base_url=event.get("base_url", ""),
-                scenario=event.get("scenario", "grounded"),
+                package_name=package_name,
                 echo_card=event.get("participants", {}).get("echo", {}).get("card", ""),
                 mirror_card=event.get("participants", {}).get("mirror", {}).get("card", ""),
                 sampling=sampling,

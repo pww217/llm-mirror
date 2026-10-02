@@ -4,63 +4,86 @@
 
 ```
 main.py (entry point)
-  ├── personas.py (constants)
-  ├── prompt.py (pure renderer)
-  ├── session.py (JSONL store, resume, slugify)
-  ├── client.py (HTTP oMLX client)
-  ├── app.py (state machine, worker thread)
-  └── tui.py (rich TUI, command dispatch)
+   ├── packages/ (scenario packages: Package protocol, DebatePackage)
+   │    └── debate/ (debate scenario: personas, system prompt, rendering)
+   ├── prompt.py (pure renderer: Message, speaker_label, render_transcript, render_tail, strip_reply)
+   ├── session.py (JSONL store, resume, slugify)
+   ├── client.py (HTTP oMLX client)
+   ├── app.py (state machine, worker thread, package integration)
+    └── tui.py (Textual TUI, command dispatch)
 ```
 
 ## Public API signatures
 
-### personas.py
+### packages/__init__.py
 
 ```python
-ECHO_CARD: str
-MIRROR_CARD: str
-SCENARIO_GROUNDED: str
-SCENARIO_FREE: str
-SEED_TOPICS: list[str]
+@runtime_checkable
+class Package(Protocol):
+    @property
+    def name(self) -> str
+    @property
+    def personas(self) -> dict[str, str]
+    @property
+    def system_prompt(self) -> str
+    def render_transcript(self, messages: Sequence[Message]) -> str
+    def render_tail(self, speaker: str, opening: bool) -> str
+    @property
+    def seed_topics(self) -> list[str]
+    def next_speaker(self, current: str) -> str
+
+def load_packages() -> dict[str, Package]
+```
+
+### packages/debate/__init__.py
+
+```python
+class DebatePackage:
+    def __init__(self, free: bool = False) -> None
+    @property
+    def name(self) -> str
+    @property
+    def personas(self) -> dict[str, str]
+    @property
+    def system_prompt(self) -> str
+    def render_transcript(self, messages: Sequence[Message]) -> str
+    def render_tail(self, speaker: str, opening: bool) -> str
+    @property
+    def seed_topics(self) -> list[str]
+    def next_speaker(self, current: str) -> str
 ```
 
 ### prompt.py
 
 ```python
-@dataclass(frozen=True)
 class Message:
     speaker: str
     content: str
 
 def speaker_label(speaker: str) -> str
-def render_system(echo_card: str, mirror_card: str, free: bool) -> str
 def render_transcript(messages: Sequence[Message]) -> str
 def render_tail(speaker: str, opening: bool) -> str
-def render_user_message(messages: Sequence[Message], opening: bool) -> str
 def strip_reply(content: str, speaker: str) -> str
 ```
 
 ### session.py
 
 ```python
-@dataclass(frozen=True)
 class Sampling:
     temperature: float
     max_tokens: int
     frequency_penalty: float
     presence_penalty: float
 
-@dataclass(frozen=True)
 class TurnUsage:
     prompt_tokens: int
     completion_tokens: int
     cached_tokens: int
 
-@dataclass(frozen=True)
 class SessionMeta:
     model: str
     base_url: str
-    scenario: str
+    package_name: str
     echo_card: str
     mirror_card: str
     sampling: Sampling
@@ -136,7 +159,7 @@ class SessionStats:
     duration_s: float
 
 class MirrorApp:
-    def __init__(self, client, store, state, max_turns=0, ctx_guard_pct=0.9) -> None
+    def __init__(self, client, store, state, package, max_turns=0, ctx_guard_pct=0.9) -> None
     def status(self) -> AppStatus
     def start(self) -> None
     def pause(self) -> None
@@ -159,10 +182,18 @@ class ParsedInput:
     content: str
 
 def parse_input(raw: str) -> ParsedInput
+def _format_message(msg: Message) -> Text
 
-class Tui:
+class Tui(App):
     def __init__(self, app: MirrorApp, store: SessionStore, session_id: str, model: str) -> None
-    def run(self) -> None
-    def _refresh_loop(self) -> None
-    def _on_refresh(self) -> None
+    def compose(self) -> ComposeResult
+    def on_mount(self) -> None
+    @work(thread=True)
+    async def refresh_worker(self) -> None
+    def _schedule_ui_update(self, data: dict) -> None
+    def action_pause(self) -> None
+    def action_resume(self) -> None
+    def action_save(self) -> None
+    def action_quit(self) -> None
+    async def on_input_submitted(self, event: Input.Submitted) -> None
 ```

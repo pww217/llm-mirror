@@ -1,21 +1,25 @@
 from __future__ import annotations
 
-import threading
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
-from rich.console import Console as RichConsole
-from rich.layout import Layout
-from rich.live import Live
-from rich.panel import Panel
 from rich.text import Text
+from textual import work
+from textual.app import App, ComposeResult
+from textual.binding import Binding
+from textual.containers import Container
+from textual.reactive import reactive
+from textual.widgets import Header, Input, Label, RichLog
 
 if TYPE_CHECKING:
     from llm_mirror.app import MirrorApp
+    from llm_mirror.prompt import Message
     from llm_mirror.session import SessionStats, SessionStore
 
 from llm_mirror.app import AppStatus
+
+_COMMANDS = {"pause", "resume", "quit", "save", "stats", "transcript", "help"}
 
 
 @dataclass(frozen=True)
@@ -23,9 +27,6 @@ class ParsedInput:
     command: str | None
     injection_target: str
     content: str
-
-
-_COMMANDS = {"pause", "resume", "quit", "save", "stats", "transcript", "help"}
 
 
 def parse_input(raw: str) -> ParsedInput:
@@ -50,156 +51,184 @@ def parse_input(raw: str) -> ParsedInput:
     return ParsedInput(command=None, injection_target=target, content=content)
 
 
-def _status_chip(status: AppStatus) -> Text:
-    labels = {
-        AppStatus.RUNNING: "[RUNNING]",
-        AppStatus.PAUSED: "[PAUSED]",
-        AppStatus.STOPPED: "[STOPPED]",
-    }
-    label = labels.get(status, "[?]")
-    color = {"RUNNING": "green", "PAUSED": "yellow", "STOPPED": "red"}.get(status.value, "white")
-    return Text(f" {label} ", style=f"bold {color} on dark_blue")
-
-
-def _render_transcript(messages, last_stats: str = "") -> Text:
+def _format_message(msg: Message) -> Text:
+    if msg.speaker == "user" and msg.content.startswith("Topic: "):
+        return Text()
+    color = {"echo": "cyan", "mirror": "magenta", "user": "yellow bold"}.get(msg.speaker, "white")
     text = Text()
-    start = max(0, len(messages) - 10)
-    for msg in messages[start:]:
-        color = {"echo": "cyan", "mirror": "magenta", "user": "yellow bold"}.get(msg.speaker, "white")
-        text.append(f"{msg.speaker.capitalize()}: ", style=f"bold {color}")
-        text.append(msg.content + "\n", style=color)
-    if last_stats:
-        text.append(f"\n[{last_stats}]", style="dim")
+    text.append(f"{msg.speaker.capitalize()}: ", style=f"bold {color}")
+    text.append(msg.content + "\n", style=color)
     return text
 
 
-class Tui:
+class Tui(App):
+    BINDINGS: ClassVar[list[Binding]] = [
+        Binding("escape", "quit", "Quit"),
+        Binding("p", "pause", "Pause"),
+        Binding("r", "resume", "Resume"),
+        Binding("s", "save", "Save"),
+    ]
+
+    DEFAULT_CSS = """
+    Tui {
+        layout: vertical;
+    }
+
+    #header {
+        height: 1;
+    }
+
+    #body {
+        height: 1fr;
+    }
+
+    #transcript {
+        width: 100%;
+        height: 100%;
+        background: transparent;
+    }
+
+    #input {
+        height: 1;
+    }
+
+    #footer {
+        height: 1;
+    }
+
+    #statusbar {
+        height: 1;
+    }
+    """
+
+    status = reactive(AppStatus.RUNNING, always_update=True)
+    _total_prompt = reactive(0)
+    _total_cached = reactive(0)
+    _total_completion = reactive(0)
+    _total_latency = reactive(0)
+    _last_turn_text = reactive("")
+    _rendered_count: int = 0
+
     def __init__(self, app: MirrorApp, store: SessionStore, session_id: str, model: str) -> None:
+        super().__init__()
         self._app = app
         self._store = store
         self._session_id = session_id
         self._model = model
-        self._last_stats: str = ""
-        self._last_turn_text: str = ""
-        self._total_prompt = 0
-        self._total_cached = 0
-        self._total_completion = 0
-        self._total_latency = 0
-        self._lock = threading.Lock()
-        self._console = RichConsole()
-        self._live: Live | None = None
 
-    def _render(self) -> Layout:
-        with self._lock:
-            msgs = list(self._app._state.messages) if self._app._state else []
-        status = self._app.status
-        header_parts = [_status_chip(status), Text(f" {self._model} ")]
-        turn_count = len([m for m in msgs if m.speaker in ("echo", "mirror")])
-        header_parts.append(Text(f" {self._session_id} | {turn_count} turns"))
-        header = Text().join(header_parts)
-        transcript = _render_transcript(msgs, self._last_stats)
-        layout = Layout()
-        layout.split(
-            Layout(Panel(header, title="llm-mirror", border_style="blue"), name="header"),
-            Layout(Panel(transcript, title="Transcript"), name="body"),
-            Layout(name="footer"),
-        )
-        footer_parts = [
-            Text(" prompt", style="dim"),
-            Text(f" {self._total_prompt}", style="cyan"),
-            Text(" · cached", style="dim"),
-            Text(f" {self._total_cached}", style="cyan"),
-            Text(" · ", style="dim"),
-            Text(f"{self._total_completion} toks", style="cyan"),
-        ]
-        if self._last_turn_text:
-            footer_parts.append(Text(" · ", style="dim"))
-            footer_parts.append(Text(self._last_turn_text, style="yellow"))
-        layout["footer"].update(Text().join(footer_parts))
-        return layout
+    def compose(self) -> ComposeResult:
+        yield Header()
+        with Container(id="body"):
+            yield RichLog(id="transcript", auto_scroll=True, wrap=True)
+        yield Input(placeholder="Type message or /command...")
+        yield Label("", id="statusbar")
 
-    def _refresh_loop(self) -> None:
+    def on_mount(self) -> None:
+        self.refresh_worker()
+
+    @work(thread=True)
+    def refresh_worker(self) -> None:
         while True:
             time.sleep(0.5)
-            if self._live is None:
-                break
-            self._on_refresh()
-            try:
-                self._live.update(self._render())
-            except RuntimeError:
-                break
+            stats = self._app.stats()
+            last = self._app.last_turn
+            status = self._app.status
+            with self._app._lock:
+                msgs = list(self._app._state.messages) if self._app._state else []
+            last_turn_text = f"last: {last.turns}toks in {last.duration_s:.1f}s" if last and last.turns > 0 else ""
+            data = {
+                "status": status,
+                "prompt_tokens": stats.prompt_tokens,
+                "cached_tokens": stats.cached_tokens,
+                "completion_tokens": stats.completion_tokens,
+                "latency_ms": stats.mean_latency_ms,
+                "last_turn_text": last_turn_text,
+                "messages": msgs,
+            }
+            self.call_from_thread(self._schedule_ui_update, data)
 
-    def _on_refresh(self) -> None:
-        s = self._app.stats()
-        last = self._app.last_turn
-        with self._lock:
-            self._total_prompt = s.prompt_tokens
-            self._total_cached = s.cached_tokens
-            self._total_completion = s.completion_tokens
-            self._total_latency = s.mean_latency_ms
-            if last and last.turns > 0:
-                self._last_turn_text = f"last: {last.turns}toks in {last.duration_s:.1f}s"
-            else:
-                self._last_turn_text = ""
+    def _schedule_ui_update(self, data: dict) -> None:
+        transcript = self.query_one("#transcript", RichLog)
+        if not transcript._size_known:
+            return
+        self.status = data["status"]
+        self._total_prompt = data["prompt_tokens"]
+        self._total_cached = data["cached_tokens"]
+        self._total_completion = data["completion_tokens"]
+        self._total_latency = data["latency_ms"]
+        self._last_turn_text = data["last_turn_text"]
+        msgs = data["messages"]
+        new_count = len(msgs) - self._rendered_count
+        if new_count > 0:
+            start = max(0, self._rendered_count)
+            for msg in msgs[start:]:
+                formatted = _format_message(msg)
+                if formatted.plain:
+                    transcript.write(formatted)
+            self._rendered_count = len(msgs)
+        turn_count = len([m for m in msgs if m.speaker in ("echo", "mirror")])
+        parts: list[str] = []
+        parts.append(data["status"].name)
+        parts.append(self._model)
+        parts.append(f"{self._session_id} | {turn_count} turns")
+        parts.append(f"scenario {self._app._state.meta.package_name if self._app._state else 'debate'}")
+        parts.append(f"prompt {data['prompt_tokens']}")
+        parts.append(f"cached {data['cached_tokens']}")
+        parts.append(f"{data['completion_tokens']} toks")
+        if self._last_turn_text:
+            parts.append(self._last_turn_text)
+        self.query_one("#statusbar", Label).update(" · ".join(parts))
 
-    def run(self) -> None:
-        self._console.print(Text(" Starting mirror session...", style="green"))
-        with Live(self._render(), console=self._console, refresh_per_second=5, screen=False) as live:
-            self._live = live
-            refresh_thread = threading.Thread(target=self._refresh_loop, daemon=True)
-            refresh_thread.start()
+    def action_pause(self) -> None:
+        self._app.pause()
+
+    def action_resume(self) -> None:
+        self._app.resume()
+
+    def action_save(self) -> None:
+        self._app.save()
+
+    def action_quit(self) -> None:
+        self._app.save()
+        self._store.write_markdown(self._app._state if self._app._state else None)
+        self.exit()
+
+    async def on_input_submitted(self, event: Input.Submitted) -> None:
+        raw = event.value
+        event.input.clear()
+        parsed = parse_input(raw)
+        if parsed.command == "unknown":
+            self.notify(f"Unknown command: /{parsed.content}", severity="error")
+        elif parsed.command == "help":
+            self.notify("Commands: /pause /resume /quit /save /stats /transcript /help", severity="info")
+        elif parsed.command == "pause":
+            self._app.pause()
+            self.notify("Paused.", severity="info")
+        elif parsed.command == "resume":
+            self._app.resume()
+            self.notify("Resumed.", severity="info")
+        elif parsed.command == "quit":
+            self._app.save()
+            self._store.write_markdown(self._app._state if self._app._state else None)
+            self.exit()
+        elif parsed.command == "save":
+            self._app.save()
+            self.notify("Saved.", severity="info")
+        elif parsed.command == "stats":
+            s: SessionStats = self._app.stats()
+            pct = f"{s.cache_hit_pct:.1f}%" if s.prompt_tokens > 0 else "N/A"
+            self.notify(
+                f"Turns: {s.turns} | Prompt: {s.prompt_tokens} | Completion: {s.completion_tokens} | "
+                f"Cached: {s.cached_tokens} ({pct}) | Avg latency: {s.mean_latency_ms:.0f}ms | "
+                f"Duration: {s.duration_s:.1f}s",
+                severity="info",
+            )
+        elif parsed.command == "transcript":
+            md_path = self._store.path.with_suffix(".md")
             try:
-                while True:
-                    try:
-                        raw = self._console.input(Text("> ", style="bold cyan"))
-                    except (EOFError, KeyboardInterrupt):
-                        break
-                    parsed = parse_input(raw)
-                    if parsed.command == "unknown":
-                        self._console.print(Text(f" Unknown command: /{parsed.content}", style="red"))
-                    elif parsed.command == "help":
-                        self._console.print(
-                            Text(" Commands: /pause /resume /quit /save /stats /transcript /help", style="yellow")
-                        )
-                    elif parsed.command == "pause":
-                        self._app.pause()
-                    elif parsed.command == "resume":
-                        self._app.resume()
-                    elif parsed.command == "quit":
-                        self._app.quit()
-                        break
-                    elif parsed.command == "save":
-                        self._app.save()
-                        self._console.print(Text(" Saved.", style="green"))
-                    elif parsed.command == "stats":
-                        s: SessionStats = self._app.stats()
-                        with self._lock:
-                            self._total_prompt = s.prompt_tokens
-                            self._total_cached = s.cached_tokens
-                            self._total_completion = s.completion_tokens
-                            self._total_latency = s.mean_latency_ms
-                        pct = f"{s.cache_hit_pct:.1f}%" if s.prompt_tokens > 0 else "N/A"
-                        table_lines = [
-                            "  │  Metric       │ Value",
-                            "  ├───────────────┼──────────────────────",
-                            f"  │  Turns        │ {s.turns}",
-                            f"  │  Prompt toks  │ {s.prompt_tokens}",
-                            f"  │  Completion   │ {s.completion_tokens}",
-                            f"  │  Cached       │ {s.cached_tokens} ({pct})",
-                            f"  │  Avg latency  │ {s.mean_latency_ms:.0f}ms",
-                            f"  │  Duration     │ {s.duration_s:.1f}s",
-                            "  └───────────────┴──────────────────────",
-                        ]
-                        self._console.print(Text("\n".join(table_lines), style="yellow"))
-                    elif parsed.command == "transcript":
-                        md_path = self._store.path.with_suffix(".md")
-                        try:
-                            md_text = md_path.read_text(encoding="utf-8")
-                            self._console.print(Text(md_text, style="dim"))
-                        except FileNotFoundError:
-                            self._console.print(Text(" No transcript yet.", style="dim"))
-                    elif parsed.command is None and parsed.content:
-                        self._app.inject(parsed.content, target=parsed.injection_target)
-                    live.update(self._render())
-            finally:
-                self._live = None
+                md_text = md_path.read_text(encoding="utf-8")
+                self.notify(md_text[:500] + "..." if len(md_text) > 500 else md_text, severity="info")
+            except FileNotFoundError:
+                self.notify("No transcript yet.", severity="warning")
+        elif parsed.command is None and parsed.content:
+            self._app.inject(parsed.content, target=parsed.injection_target)

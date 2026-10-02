@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import llm_mirror.personas as P
 import llm_mirror.prompt as U
 
 
@@ -20,35 +19,6 @@ class TestSpeakerLabel:
             assert False, "Should have raised"
         except (ValueError, KeyError):
             pass
-
-
-class TestRenderSystem:
-    def test_grounded_contains_intro(self) -> None:
-        sys_text = U.render_system(P.ECHO_CARD, P.MIRROR_CARD, free=False)
-        assert P.SCENARIO_INTRO in sys_text
-
-    def test_free_excludes_clauses(self) -> None:
-        sys_text = U.render_system(P.ECHO_CARD, P.MIRROR_CARD, free=True)
-        for clause in P.GROUNDING_CLAUSES:
-            assert clause not in sys_text
-
-    def test_grounded_contains_clauses(self) -> None:
-        sys_text = U.render_system(P.ECHO_CARD, P.MIRROR_CARD, free=False)
-        for clause in P.GROUNDING_CLAUSES:
-            assert clause in sys_text
-
-    def test_card_override(self) -> None:
-        sys_text = U.render_system("custom echo", "custom mirror", free=False)
-        assert "custom echo" in sys_text
-        assert "custom mirror" in sys_text
-        assert P.ECHO_CARD not in sys_text
-        assert P.MIRROR_CARD not in sys_text
-
-    def test_byte_identity(self) -> None:
-        a = U.render_system(P.ECHO_CARD, P.MIRROR_CARD, free=False)
-        b = U.render_system(P.ECHO_CARD, P.MIRROR_CARD, free=False)
-        assert a == b
-
 
 class TestRenderTranscript:
     def test_empty(self) -> None:
@@ -77,35 +47,15 @@ class TestRenderTranscript:
 class TestRenderTail:
     def test_regular(self) -> None:
         result = U.render_tail("echo", opening=False)
-        assert result == "The next message is from Echo. Write only Echo's next message text (no name label), in character."
+        assert result == "Write only Echo's next message text (no name label), in character."
 
     def test_regular_mirror(self) -> None:
         result = U.render_tail("mirror", opening=False)
-        assert result == "The next message is from Mirror. Write only Mirror's next message text (no name label), in character."
+        assert result == "Write only Mirror's next message text (no name label), in character."
 
     def test_opening(self) -> None:
         result = U.render_tail("echo", opening=True)
-        assert result == "This is the opening of the conversation. The next message is from Echo. Write only Echo's message text (no name label), in character."
-
-
-class TestRenderUserMessage:
-    def test_opening_no_messages(self) -> None:
-        result = U.render_user_message([], opening=True)
-        assert result == "This is the opening of the conversation. The next message is from Echo. Write only Echo's message text (no name label), in character."
-
-    def test_with_messages(self) -> None:
-        msgs = [U.Message("user", "Topic: cars.")]
-        result = U.render_user_message(msgs, opening=True)
-        assert "User: Topic: cars." in result
-        assert "\n\n" in result
-        assert "The next message is from Echo." in result
-
-    def test_byte_identity(self) -> None:
-        msgs = [U.Message("user", "Topic: cars.")]
-        a = U.render_user_message(msgs, opening=True)
-        b = U.render_user_message(msgs, opening=True)
-        assert a == b
-
+        assert result == "This is the opening of the conversation. Write only Echo's message text (no name label), in character."
 
 class TestStripReply:
     def test_empty_string(self) -> None:

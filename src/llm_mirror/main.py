@@ -8,9 +8,9 @@ import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-import llm_mirror.personas as P
 from llm_mirror.app import MirrorApp
 from llm_mirror.client import OmlxClient, OmlxClientError
+from llm_mirror.packages import load_packages
 from llm_mirror.prompt import Message
 from llm_mirror.session import (
     Sampling,
@@ -39,7 +39,7 @@ def _setup_logging(log_level: str) -> None:
     )
 
 
-def _run_headless(app: MirrorApp, store: SessionStore, state: SessionState, session_id: str, model: str) -> int:
+def _run_headless(app: MirrorApp, store: SessionStore, state: SessionState, session_id: str, model: str, max_turns: int) -> int:
     import time as _time
 
     print(f"Headless mode: {session_id} (model: {model})", flush=True)
@@ -67,6 +67,13 @@ def _run_headless(app: MirrorApp, store: SessionStore, state: SessionState, sess
                         last_line_count = len(lines)
                 except (OSError, json.JSONDecodeError) as exc:
                     print(f"Error reading JSONL: {exc}", file=sys.stderr)
+            try:
+                lines = jsonl_path.read_text(encoding="utf-8").splitlines()
+                turn_count = sum(1 for line in lines if line.strip() and json.loads(line).get("type") == "turn")
+                if max_turns > 0 and turn_count >= max_turns:
+                    break
+            except (OSError, json.JSONDecodeError):
+                pass
             _time.sleep(0.5)
     except KeyboardInterrupt:
         print("\nStopping...")
@@ -80,7 +87,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="llm-mirror: two-persona autonomous conversation")
     parser.add_argument("--prompt", type=str, default=None, help="Session seed topic")
     parser.add_argument("--no-seed", action="store_true", default=False, help="Do not use a seed topic")
-    parser.add_argument("--free", action="store_true", default=False, help="Use free scenario (no grounding clauses)")
+    parser.add_argument("--scenario", type=str, default="debate", help="Scenario package name (default: debate)")
+    parser.add_argument("--free", action="store_true", default=False, help="[deprecated] Use --scenario debate")
     parser.add_argument("--resume", type=str, default=None, help="Resume a session by path or 'latest'")
     parser.add_argument("--model", type=str, default=None, help="Model name")
     parser.add_argument("--session-dir", type=str, default="sessions", help="Directory for session files")
@@ -130,6 +138,18 @@ def main() -> int:
     session_dir = Path(args.session_dir)
     session_dir.mkdir(parents=True, exist_ok=True)
 
+    # Load packages
+    packages = load_packages()
+    scenario_name = args.scenario
+    if scenario_name not in packages:
+        print(f"Unknown scenario: {scenario_name}. Available: {', '.join(packages.keys())}", file=sys.stderr)
+        return 2
+    package = packages[scenario_name]()
+
+    # Handle --free override for backward compatibility
+    if args.free and hasattr(package, "_free"):
+        package._free = True
+
     if args.resume:
         if args.resume == "latest":
             jsonl_files = sorted(session_dir.glob("*.jsonl"))
@@ -145,17 +165,16 @@ def main() -> int:
         session_id = session_path.stem
     else:
         seed = None
-        if not args.no_seed:
-            if args.prompt:
-                seed = args.prompt
-            else:
-                seed = random.choice(P.SEED_TOPICS)
+        if args.prompt:
+            seed = args.prompt
+        elif not args.no_seed:
+            seed = random.choice(package.seed_topics)
         meta = SessionMeta(
             model=chosen_model,
             base_url=args.base_url,
-            scenario="free" if args.free else "grounded",
-            echo_card=args.echo_prompt or P.ECHO_CARD,
-            mirror_card=args.mirror_prompt or P.MIRROR_CARD,
+            package_name=scenario_name,
+            echo_card=args.echo_prompt or package.personas.get("echo", ""),
+            mirror_card=args.mirror_prompt or package.personas.get("mirror", ""),
             sampling=Sampling(
                 temperature=args.temp,
                 max_tokens=args.max_tokens,
@@ -172,7 +191,8 @@ def main() -> int:
             "type": "session",
             "model": meta.model,
             "base_url": meta.base_url,
-            "scenario": meta.scenario,
+            "scenario": scenario_name,
+            "package_name": meta.package_name,
             "participants": {"echo": {"card": meta.echo_card}, "mirror": {"card": meta.mirror_card}},
             "sampling": {
                 "temperature": meta.sampling.temperature,
@@ -197,13 +217,14 @@ def main() -> int:
         client,
         store,
         state,
+        package,
         max_turns=args.max_turns,
         turn_delay=args.turn_delay,
     )
     app.start()
-    session_id = state.meta.seed or path.stem
+    session_id = state.meta.seed or (path.stem if not args.resume else state.meta.package_name)
     if args.headless:
-        return _run_headless(app, store, state, session_id, chosen_model)
+        return _run_headless(app, store, state, session_id, chosen_model, args.max_turns)
     tui = Tui(app, store, session_id, chosen_model)
     try:
         tui.run()
