@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Two personas of one local model, talking to each other"
 requires-python = ">=3.13"
 dependencies = ["httpx>=0.28", "rich>=13", "textual>=1.0"]
+license = {text = "Apache-2.0"}
 
 [project.scripts]
 llm-mirror = "llm_mirror.main:main"
