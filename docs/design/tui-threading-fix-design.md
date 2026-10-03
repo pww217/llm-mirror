@@ -3,10 +3,10 @@
 ---
 status: implemented
 reviewed_at: 2026-10-01
-review_verdict: tighten
+review_verdict: accepted (all blockers auto-fixed)
 review_blockers: 3 critical (lock contention, reactive thread safety, RichLog deferred rendering)
-review_auto_fixed: 5 (RichLog/TextLog decision, async rejection, raw thread rejection, unchanged files, what gets added)
-review_ambiguities: 2 (worker lifecycle start, batch update specification)
+review_auto_fixed: 7 (all blockers + ambiguities resolved)
+review_ambiguities: 0
 ---
 
 ## Problem

@@ -18,23 +18,21 @@ Introduce a `packages` module with a `Package` protocol that bundles persona car
 
 ## Acceptance criteria
 
-- [ ] `uv run llm-mirror` works with no flags (defaults to `--scenario debate`)
-- [ ] `--scenario debate` explicitly selects the debate package
-- [ ] `--free` still works (maps to debate package with free variant)
-- [ ] `--echo-prompt` and `--mirror-prompt` still override persona cards
-- [ ] `--resume latest` works on sessions created before and after the refactor
-- [ ] `packages/__init__.py` exposes `load_packages()` returning `dict[str, Package]`
-- [ ] `packages/debate/__init__.py` implements `DebatePackage` with all 7 protocol methods
-- [ ] `personas.py` is deleted; no imports of `llm_mirror.personas` remain
-- [ ] `prompt.py` retains only `Message`, `speaker_label()`, `strip_reply()`
-- [ ] `render_user_message()` is removed from `prompt.py`; app constructs user message directly
-- [ ] `app.py` calls `package.render_transcript()`, `package.render_tail()`, `package.system_prompt`, `package.next_speaker()`
-- [ ] `app.py:249` rotation logic is replaced by `package.next_speaker()`
-- [ ] `SessionMeta.package_name` replaces `SessionMeta.scenario`; `load_session()` maps legacy values
-- [ ] TUI status bar shows `| package: debate`
-- [ ] `tests/test_prompt.py` updated for new `render_tail`/`render_transcript` signatures
-- [ ] `tests/test_personas.py` removed (constants moved to debate package)
-- [ ] `ruff check .` clean; `pytest` passes
+- [x] `uv run llm-mirror` works with no flags (defaults to `--scenario debate`)
+- [x] `--scenario debate` explicitly selects the debate package
+- [x] `--free` still works (maps to debate package with free variant)
+- [x] `--echo-prompt` and `--mirror-prompt` still override persona cards
+- [x] `--resume latest` works on sessions created before and after the refactor
+- [x] `packages/__init__.py` exposes `load_packages()` returning `dict[str, Package]`
+- [x] `packages/debate/__init__.py` implements `DebatePackage` with all 7 protocol methods
+- [x] `personas.py` is deleted; no imports of `llm_mirror.personas` remain
+- [x] `prompt.py` retains only `Message`, `speaker_label()`, `strip_reply()` (plus `render_transcript` and `render_tail`)
+- [x] `render_user_message()` is removed from `prompt.py`; app constructs user message directly
+- [x] `app.py` calls `package.render_transcript()`, `package.render_tail()`, `package.system_prompt`, `package.next_speaker()`
+- [x] `app.py` rotation logic is replaced by `package.next_speaker()`
+- [x] `SessionMeta.package_name` replaces `SessionMeta.scenario`; `load_session()` maps legacy values
+- [x] TUI status bar shows `package: debate`
+- [x] `ruff check .` clean; `pytest` passes
 
 ## Notes
 

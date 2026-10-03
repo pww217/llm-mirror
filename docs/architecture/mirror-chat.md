@@ -38,7 +38,8 @@ User input ──→ parse_input() ──→ app.inject() ──→ injection qu
   "ts": "2025-01-01T00:00:00+00:00",
   "model": "mlx-community--Qwen3.6-35B-A3B-OptiQ-4bit",
   "base_url": "http://localhost:8000/v1",
-  "scenario": "grounded",
+  "scenario": "debate",
+  "package_name": "debate",
   "participants": {"echo": {"card": "..."}, "mirror": {"card": "..."}},
   "sampling": {"temperature": 0.8, "max_tokens": 300, "frequency_penalty": 0.0, "presence_penalty": 0.0},
   "seed": "whether cities should ban private cars downtown",
@@ -74,9 +75,9 @@ User input ──→ parse_input() ──→ app.inject() ──→ injection qu
 
 ## Stage contracts
 
-### personas.py → prompt.py
+### packages/ → prompt.py
 
-`ECHO_CARD`, `MIRROR_CARD`, `SCENARIO_GROUNDED`, `SCENARIO_FREE` are byte-stable constants. `render_system()` swaps card paragraphs into the scenario text verbatim. No variation mid-session.
+Each `Package` implementation provides `system_prompt`, `personas`, `render_transcript`, `render_tail`. The app calls these methods instead of standalone functions. No variation mid-session.
 
 ### prompt.py → client.py
 
@@ -92,7 +93,7 @@ User input ──→ parse_input() ──→ app.inject() ──→ injection qu
 
 ### app.py → tui.py
 
-`Tui.run()` polls `MirrorApp.status` and `MirrorApp.stats()` every 0.5s via `rich.live.Live`. User input is parsed by `parse_input()` and dispatched to `MirrorApp.inject()`, `MirrorApp.pause()`, etc.
+`Tui` uses a `@work(thread=True)` refresh worker that polls `MirrorApp.status` and `MirrorApp.stats()` every 0.5s. User input is parsed by `parse_input()` and dispatched to `MirrorApp.inject()`, `MirrorApp.pause()`, etc. via `call_from_thread()` for thread-safe UI updates.
 
 ### main.py
 

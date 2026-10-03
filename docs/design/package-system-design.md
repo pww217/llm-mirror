@@ -1,8 +1,8 @@
 # Package System — MVP 0 Design
 
 - Type: feature (refactor + extension)
-- Status: final
-- Design doc: this file. Roadmap ticket: `roadmap/features/package-system.md`
+- Status: implemented
+- Design doc: this file. Roadmap ticket: `roadmap/features/package-system-mvp-0.md`
 
 ## Problem
 

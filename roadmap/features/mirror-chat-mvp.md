@@ -19,13 +19,14 @@ plan: plans/mirror-chat-mvp-plan.md
 ## Acceptance criteria
 
 - [x] `uv run llm-mirror` starts a conversation with no flags; conversation runs until `/pause` or `/quit`.
-- [x] `--prompt`, `--no-seed`, `--free`, `--model`, `--echo-prompt`/`--mirror-prompt`, `--resume latest` all behave per design doc.
+- [x] `--prompt`, `--no-seed`, `--scenario`, `--free`, `--model`, `--echo-prompt`/`--mirror-prompt`, `--headless`, `--turn-delay`, `--thinking`, `--resume latest` all behave per design doc.
 - [x] Cache acceptance check: from turn ≥ 3, `cached_tokens ≥ prompt_tokens − tokens(last message) − tokens(tail) − 256`, verified on a 20-turn session (manual smoke test; record results in the session JSONL).
 - [x] Prompt contract: identical session state renders byte-identical system + transcript prefix (unit test).
 - [x] Injections: ambient text and `@Echo:`/`@Mirror:` targeting, queued while RUNNING, immediate while PAUSED (unit test on queue logic; manual smoke).
-- [x] `/pause` `/resume` `/quit` `/save` `/stats` `/transcript` `/help` all work; Ctrl+C saves cleanly; no crash on server error mid-conversation.
+- [x] `/pause` `/resume` `/quit` `/save` `/stats` `/transcript` `/help` all work; `Escape` key saves cleanly; no crash on server error mid-conversation.
 - [x] `sessions/*.jsonl` records every event incl. per-turn `usage.cached_tokens`; `*.md` render matches; `--resume` reproduces transcript and rotation position.
 - [x] Context guard: auto-pauses with warning at 90% of `max_model_len`.
+- [x] Package system: `debate`, `roleplay`, `improv` packages via entry-point discovery.
 - [x] `ruff check .` and `pytest` pass.
 
 ## Notes

@@ -1,10 +1,10 @@
 # llm-mirror
 
-Two personas of one local model, talking to each other.
+An experiment in self-dialogue: run a local LLM as two personas debating, roleplaying, or improvising — fully offline, zero API keys, terminal-based TUI.
 
-## Overview
+## What it does
 
-`llm-mirror` runs an autonomous conversation between two personas — **Echo** (warm, curious, generative) and **Mirror** (skeptical, precise) — served by a local oMLX instance. The user observes, pauses, reads back, and injects messages at any time.
+`llm-mirror` runs an autonomous conversation between two personas — **Echo** and **Mirror** — served by a local oMLX (or any OpenAI-compatible) server. The user observes, pauses, reads back, and injects messages at any time.
 
 Every request reuses the full KV-cache prefix: the entire history appears as a single system message plus a single user message, so prefill work is zero on every turn.
 
@@ -16,6 +16,14 @@ make run
 ```
 
 Requires a running oMLX server (default `http://localhost:8000`).
+
+## Packages
+
+| Package | Command | Description |
+|---|---|---|
+| Debate | `make run` | Two personas explore a topic in alternating turns |
+| Roleplay | `--scenario roleplay` | Two personas inhabit characters in a fictional setting |
+| Improv | `--scenario improv` | Two personas collaboratively build a story |
 
 ## Modes
 
@@ -37,7 +45,8 @@ llm-mirror [OPTIONS]
 |---|---|---|---|
 | `--prompt TEXT` | str | — | Session seed topic |
 | `--no-seed` | flag | off | No seed topic |
-| `--free` | flag | off | Free scenario (no grounding clauses, empty system prompt) |
+| `--scenario TEXT` | str | `debate` | Package name (`debate`, `roleplay`, `improv`) |
+| `--free` | flag | off | **[deprecated]** Use `--scenario debate` with `--no-seed` |
 | `--resume [PATH\|latest]` | str | — | Resume a session |
 | `--model TEXT` | str | from `/health` | Model name |
 | `--session-dir PATH` | str | `sessions` | Session file directory |
@@ -65,24 +74,12 @@ llm-mirror [OPTIONS]
 | `/stats` | Show turn statistics (tokens, cache hit %, latency) |
 | `/transcript` | Show full Markdown transcript |
 | `/help` | Show available commands |
+| `Escape` | Quit |
+| `p` | Pause |
+| `r` | Resume |
+| `s` | Save |
 
 Typed text (non-command) is injected into the conversation. Use `@Echo:` or `@Mirror:` to target a specific persona.
-
-## Scenarios
-
-- **grounded** (default): Personas + rules + grounding clauses ("Stay on topic", "No AI/meta commentary").
-- **free**: Personas only, no grounding clauses, empty system prompt.
-
-Use `--free` for the free scenario.
-
-## Persona cards
-
-| Persona | Trait |
-|---|---|
-| Echo | Warm, curious, generative. Proposes ideas, explores possibilities, builds on what others said, asks interesting questions. |
-| Mirror | Skeptical and precise. Examines claims, points out weaknesses and hidden assumptions, offers counterexamples, disagrees when warranted. Not hostile — rigorous. |
-
-Override with `--echo-prompt` and `--mirror-prompt`.
 
 ## Session storage
 
@@ -95,20 +92,20 @@ Sessions are resumable purely from the JSONL file: transcript, rotation position
 ## Architecture
 
 ```
-main.py      → argparse, health/model check, session init/resume, wiring
-app.py       → MirrorApp: state machine (RUNNING/PAUSED/STOPPED), worker thread, injection queue
-client.py    → OmlxClient: HTTP chat with retry taxonomy, telemetry, think-tag stripping
-prompt.py    → Pure renderer: Message, render_system, render_transcript, render_tail, strip_reply
-session.py   → SessionMeta, SessionState, SessionStore, load_session, new_session_path
-tui.py       → Tui: Rich Live panel, command dispatch, injection handling, refresh thread
-personas.py  → ECHO_CARD, MIRROR_CARD, SCENARIO_GROUNDED, SCENARIO_FREE, SEED_TOPICS
+src/llm_mirror/
+  main.py      → CLI flags, startup, shutdown
+  app.py       → MirrorApp: state machine (RUNNING/PAUSED/STOPPED), worker thread, injection queue
+  client.py    → OmlxClient: HTTP chat with retry taxonomy, telemetry, think-tag stripping
+  prompt.py    → Message, speaker_label, strip_reply, render_transcript, render_tail
+  session.py   → SessionMeta, SessionState, SessionStore, load_session, new_session_path
+  tui.py       → Tui: Textual app with RichLog transcript, command dispatch, refresh worker
+  packages/
+    debate/    → DebatePackage: Echo vs Mirror topic exploration
+    roleplay/  → RoleplayPackage: fictional character roleplay
+    improv/    → ImprovPackage: collaborative story-building
 ```
 
-## Anti-collapse research
-
-- Per-turn tail directive names the speaker; persona cards in the shared preamble — cuts echoing to 9% (arXiv:2511.09710).
-- Echo (constructive) vs Mirror (skeptical) persona tension — mixing peacemaker/troublemaker cuts errors by 54–73pp (arXiv:2509.23055, 2509.05396, 2605.00914).
-- Same-model debaters converge to premature consensus (85% conformity) without persona tension.
+Tests mirror source structure: `tests/test_<module>.py`.
 
 ## Development
 
@@ -118,4 +115,6 @@ uv run ruff check .
 uv run pytest
 ```
 
-Tests mirror source structure: `tests/test_<module>.py`.
+## License
+
+Licensed under the [Apache License 2.0](LICENSE).

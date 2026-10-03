@@ -4,7 +4,7 @@
 title: TUI Threading and Rendering Fix
 slug: tui-threading-fix
 type: bug
-status: validated
+status: done
 priority: high
 size: S
 deps: none

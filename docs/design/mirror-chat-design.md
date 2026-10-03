@@ -1,7 +1,7 @@
 # Mirror Chat — MVP Design
 
 - Type: feature (greenfield; repo `llm-mirror` contains no code today)
-- Status: final — all decisions resolved with the user; no open questions
+- Status: implemented — all decisions resolved, code complete
 - Design doc: this file. Roadmap ticket: `roadmap/features/mirror-chat-mvp.md`
 
 ## Problem
@@ -83,7 +83,7 @@ Typed non-command text is a `User:` line in the canonical transcript. Ambient te
 
 ### D8 — Control commands; default state RUNNING
 
-`/pause`, `/resume`, `/quit` (also Ctrl+C: save and exit cleanly), `/save`, `/stats`, `/transcript` (page the rendered Markdown), `/help`. Unknown `/x` → error line, no side effects. Pause takes effect at the turn boundary; an in-flight request is allowed to finish and its turn is kept.
+`/pause`, `/resume`, `/quit`, `/save`, `/stats`, `/transcript` (page the rendered Markdown), `/help`. Keybindings: `Escape` (quit), `p` (pause), `r` (resume), `s` (save). Unknown `/x` → error line, no side effects. Pause takes effect at the turn boundary; an in-flight request is allowed to finish and its turn is kept.
 
 ### D9 — Persistence and resume
 
@@ -108,10 +108,10 @@ src/llm_mirror/
   main.py      # CLI flags, startup, shutdown
   app.py       # state machine (RUNNING/PAUSED/STOPPED), threads, injection queue
   client.py    # oMLX HTTP client: health/models/chat, retries, telemetry extraction
-  prompt.py    # pure prompt-contract rendering (system, transcript, tail) — no IO
+  prompt.py    # Message, speaker_label, strip_reply, render_transcript, render_tail
   session.py   # state, JSONL append, MD render, resume reconstruction
-  tui.py       # rich layout, Live panel, command dispatch, pager
-  personas.py  # default persona cards, rules, seed topics
+  tui.py       # Textual app, RichLog transcript, command dispatch, refresh worker
+  packages/    # Package protocol + debate, roleplay, improv implementations
 ```
 
 Tests target the pure modules (`prompt`, `session`, command parsing); no network in tests.
