@@ -15,7 +15,7 @@ roleplay = "llm_mirror.packages.roleplay:RoleplayPackage"
 improv = "llm_mirror.packages.improv:ImprovPackage"
 
 [dependency-groups]
-dev = ["ruff==0.17.0", "pytest==9.1.1"]
+dev = ["ruff==0.17.1", "pytest==9.1.1"]
 
 [build-system]
 requires = ["hatchling"]
